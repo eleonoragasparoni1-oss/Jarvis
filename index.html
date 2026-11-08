@@ -79,7 +79,7 @@ function speak(t){
 }
 async function send(text){
   text=(text||'').trim(); if(!text)return;
-  const key=store.get('jv_key');
+  const key=(store.get('jv_key')||'').replace(/[^A-Za-z0-9_-]/g,'');
   if(!key){$('settings').open=true;add('sys','Inserisci prima la chiave API nelle impostazioni.');return;}
   add('me',text);
   history.push({role:'user',parts:[{text}]});
@@ -87,11 +87,11 @@ async function send(text){
   let h=history.slice(-20);
   while(h.length&&h[0].role!=='user')h.shift();
   try{
-    const model=store.get('jv_model')||'gemini-3.8-flash';
-    const r=await fetch('https://generativelanguage.googleapis.com/v1beta/models/'+encodeURIComponent(model)+':generateContent',{
+    const model=(store.get('jv_model')||'gemini-3.8-flash').trim();
+    const r=await fetch('https://generativelanguage.googleapis.com/v1beta/models/'+encodeURIComponent(model)+':generateContent?key='+encodeURIComponent(key),{
       method:'POST',
-      headers:{'Content-Type':'application/json','x-goog-api-key':key},
-      body:JSON.stringify({systemInstruction:{parts:[{text:SYSTEM}]},contents:h})
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({systemInstruction:{parts:[{text:SYSTEM+' Data e ora attuali: '+new Date().toLocaleString('it-IT')}]},contents:h})
     });
     const d=await r.json();
     if(!r.ok) throw new Error((d.error&&d.error.message)||('Errore '+r.status));
@@ -100,14 +100,14 @@ async function send(text){
     history.push({role:'model',parts:[{text:out}]});
     wait.textContent=out; speak(out);
   }catch(e){
-    wait.textContent='Errore: '+e.message; wait.className='msg sys'; history.pop();
+    wait.textContent='Errore: '+e.message+' (modello: '+(store.get('jv_model')||'gemini-3.8-flash')+')'; wait.className='msg sys'; history.pop();
   }
   $('log').scrollTop=$('log').scrollHeight;
 }
 $('send').onclick=()=>{unlock();const t=$('txt').value;$('txt').value='';send(t);};
 $('txt').onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();$('send').click();}};
 $('save').onclick=()=>{
-  store.set('jv_key',$('key').value.trim());
+  store.set('jv_key',$('key').value.replace(/[^A-Za-z0-9_-]/g,''));
   store.set('jv_model',$('model').value.trim()||'gemini-3.8-flash');
   $('settings').open=false; add('sys','Salvato ✅');
 };
