@@ -119,4 +119,13 @@ $('mic').onclick=()=>{
   if(!SR){add('sys','Riconoscimento vocale non supportato: apri Jarvis in Safari.');return;}
   if(listening){rec.stop();return;}
   speechSynthesis.cancel();
-  rec=new SR(
+  rec=new SR(); rec.lang='it-IT'; rec.interimResults=false;
+  rec.onstart=()=>{listening=true;$('mic').classList.add('on');};
+  rec.onend=()=>{listening=false;$('mic').classList.remove('on');};
+  rec.onerror=e=>add('sys','Microfono: '+e.error);
+  rec.onresult=e=>send(e.results[0][0].transcript);
+  rec.start();
+};
+</script>
+</body>
+</html>
