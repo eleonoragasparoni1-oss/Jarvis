@@ -15,12 +15,14 @@ h1{margin:0;font-size:18px;letter-spacing:6px;color:#4fd8ff}
 details{padding:0 16px;border-bottom:1px solid #12384d}
 summary{padding:10px 0;color:#7aa7b8;font-size:14px}
 details input{width:100%;padding:10px;margin:0 0 8px;border-radius:8px;border:1px solid #12384d;background:#0a1624;color:#d6f4ff;font-size:16px}
-details button{margin-bottom:12px;padding:10px 16px;border-radius:8px;border:0;background:#4fd8ff;color:#05202b;font-weight:600}
+details button{margin:0 6px 12px 0;padding:10px 14px;border-radius:8px;border:0;background:#4fd8ff;color:#05202b;font-weight:600}
+details button.alt{background:none;border:1px solid #4fd8ff;color:#4fd8ff;font-weight:400}
 #log{flex:1;overflow-y:auto;padding:16px}
 .msg{max-width:85%;padding:10px 14px;border-radius:14px;margin:0 0 10px;line-height:1.4;white-space:pre-wrap}
 .me{background:#12384d;margin-left:auto}
 .ai{background:#0a1d2e;border:1px solid #12384d}
 .sys{color:#ff9a9a;font-size:14px}
+.note{color:#7aa7b8;font-size:14px}
 footer{display:flex;gap:8px;align-items:center;padding:10px 12px}
 #txt{flex:1;padding:12px;border-radius:22px;border:1px solid #12384d;background:#0a1624;color:#d6f4ff;font-size:16px}
 #send{padding:12px 16px;border-radius:22px;border:0;background:#4fd8ff;color:#05202b;font-weight:600}
@@ -35,9 +37,14 @@ footer{display:flex;gap:8px;align-items:center;padding:10px 12px}
 </header>
 <details id="settings">
   <summary>⚙️ Impostazioni</summary>
-  <input id="key" type="password" placeholder="Incolla qui la chiave API Gemini">
+  <input id="key" type="password" placeholder="Chiave API Gemini">
   <input id="model" type="text" placeholder="Modello">
+  <input id="name" type="text" placeholder="Come vuoi essere chiamata?">
+  <input id="vname" type="text" placeholder="Voce (es. Luca)">
   <button id="save">Salva</button>
+  <button id="vlist" class="alt">Voci disponibili</button>
+  <button id="mshow" class="alt">Vedi memoria</button>
+  <button id="mclear" class="alt">Cancella memoria</button>
 </details>
 <div id="log"></div>
 <footer>
@@ -47,14 +54,18 @@ footer{display:flex;gap:8px;align-items:center;padding:10px 12px}
 </footer>
 <script>
 const $=id=>document.getElementById(id);
-const SYSTEM="Sei Jarvis, un assistente personale elegante, efficiente e leggermente ironico. Rispondi sempre in italiano, in modo breve e chiaro (massimo 3-4 frasi, salvo richieste diverse). Non usare elenchi, grassetti o markdown: le tue risposte vengono lette ad alta voce.";
+const DEF='gemini-3.5-flash-lite';
+const BASE="Sei Jarvis, assistente personale e secondo cervello dell'utente. Tono elegante, efficiente, caldo e leggermente ironico. Rispondi sempre in italiano, in modo breve e chiaro (massimo 3-4 frasi, salvo richieste diverse), senza elenchi, grassetti o markdown, perché le risposte vengono lette ad alta voce. Aiuti a organizzare idee, priorità, progetti e decisioni. Se una richiesta è vaga, fai una sola domanda di chiarimento. Se non sai qualcosa, dillo senza inventare. Ogni messaggio dell'utente inizia con [Adesso: data e ora]: è l'ora reale, usala per rispondere a domande su data e ora senza dire che non puoi saperle. Quando l'utente ti chiede di ricordare qualcosa, conferma a voce e aggiungi alla fine della risposta una riga esattamente in questa forma: [[RICORDA: frase breve e autosufficiente]].";
 const store={
   get:k=>{try{return localStorage.getItem(k)}catch(e){return null}},
   set:(k,v)=>{try{localStorage.setItem(k,v)}catch(e){}}
 };
-let history=[], voiceOn=true, listening=false, rec=null;
+let history=[], voiceOn=true, listening=false, rec=null, mem=[];
+try{mem=JSON.parse(store.get('jv_mem')||'[]')}catch(e){mem=[]}
 $('key').value=store.get('jv_key')||'';
-$('model').value=store.get('jv_model')||'gemini-3.8-flash';
+$('model').value=store.get('jv_model')||DEF;
+$('name').value=store.get('jv_name')||'';
+$('vname').value=store.get('jv_voice')||'Luca';
 if(!store.get('jv_key')) $('settings').open=true;
 
 function add(cls,text){
@@ -63,54 +74,80 @@ function add(cls,text){
   $('log').appendChild(d); $('log').scrollTop=$('log').scrollHeight;
   return d;
 }
+function buildSystem(){
+  let s=BASE;
+  const n=store.get('jv_name');
+  if(n) s+=" L'utente si chiama "+n+".";
+  if(mem.length) s+=" Cose che l'utente ti ha chiesto di ricordare: "+mem.join(' | ')+".";
+  return s;
+}
 function unlock(){
   if('speechSynthesis' in window){
     const u=new SpeechSynthesisUtterance(' '); u.volume=0; speechSynthesis.speak(u);
   }
 }
+function pickVoice(){
+  const vs=speechSynthesis.getVoices().filter(v=>v.lang&&v.lang.toLowerCase().startsWith('it'));
+  const want=(store.get('jv_voice')||'Luca').toLowerCase();
+  return vs.find(v=>v.name.toLowerCase().includes(want))||vs.find(v=>/luca|cosimo|diego/i.test(v.name))||vs[0]||null;
+}
 function speak(t){
   if(!voiceOn||!('speechSynthesis' in window))return;
   speechSynthesis.cancel();
   const u=new SpeechSynthesisUtterance(t.replace(/[*_#`]/g,''));
-  u.lang='it-IT';
-  const v=speechSynthesis.getVoices().find(v=>v.lang&&v.lang.startsWith('it'));
-  if(v)u.voice=v;
+  u.lang='it-IT'; u.pitch=0.9;
+  const v=pickVoice(); if(v)u.voice=v;
   speechSynthesis.speak(u);
 }
 async function send(text){
   text=(text||'').trim(); if(!text)return;
-  const key=(store.get('jv_key')||'').replace(/[^A-Za-z0-9_-]/g,'');
+  const key=(store.get('jv_key')||'').replace(/[^A-Za-z0-9_.-]/g,'');
   if(!key){$('settings').open=true;add('sys','Inserisci prima la chiave API nelle impostazioni.');return;}
   add('me',text);
   history.push({role:'user',parts:[{text}]});
   const wait=add('ai','…');
   let h=history.slice(-20);
   while(h.length&&h[0].role!=='user')h.shift();
+  const now=new Date().toLocaleString('it-IT',{dateStyle:'full',timeStyle:'short'});
+  const contents=h.map((m,i)=>i===h.length-1?{role:m.role,parts:[{text:'[Adesso: '+now+'] '+m.parts[0].text}]}:m);
+  const model=(store.get('jv_model')||DEF).trim();
   try{
-    const model=(store.get('jv_model')||'gemini-3.8-flash').trim();
     const r=await fetch('https://generativelanguage.googleapis.com/v1beta/models/'+encodeURIComponent(model)+':generateContent?key='+encodeURIComponent(key),{
       method:'POST',
       headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({systemInstruction:{parts:[{text:SYSTEM+' Data e ora attuali: '+new Date().toLocaleString('it-IT')}]},contents:h})
+      body:JSON.stringify({systemInstruction:{parts:[{text:buildSystem()}]},contents:contents})
     });
     const d=await r.json();
     if(!r.ok) throw new Error((d.error&&d.error.message)||('Errore '+r.status));
     const parts=(d.candidates&&d.candidates[0]&&d.candidates[0].content&&d.candidates[0].content.parts)||[];
-    const out=parts.map(p=>p.text||'').join('').trim()||'(nessuna risposta)';
+    let out=parts.map(p=>p.text||'').join('').trim();
+    const found=[];
+    out=out.replace(/\[\[RICORDA:\s*([\s\S]*?)\]\]/g,(m,t)=>{t=t.trim();if(t)found.push(t);return '';}).trim();
+    if(found.length){mem=mem.concat(found).slice(-100);store.set('jv_mem',JSON.stringify(mem));}
+    if(!out)out=found.length?'Fatto.':'(nessuna risposta)';
     history.push({role:'model',parts:[{text:out}]});
     wait.textContent=out; speak(out);
+    if(found.length)add('note','🧠 Memorizzato: '+found.join(' | '));
   }catch(e){
-    wait.textContent='Errore: '+e.message+' (modello: '+(store.get('jv_model')||'gemini-3.8-flash')+')'; wait.className='msg sys'; history.pop();
+    wait.textContent='Errore: '+e.message+' (modello: '+model+')'; wait.className='msg sys'; history.pop();
   }
   $('log').scrollTop=$('log').scrollHeight;
 }
 $('send').onclick=()=>{unlock();const t=$('txt').value;$('txt').value='';send(t);};
 $('txt').onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();$('send').click();}};
 $('save').onclick=()=>{
-  store.set('jv_key',$('key').value.replace(/[^A-Za-z0-9_-]/g,''));
-  store.set('jv_model',$('model').value.trim()||'gemini-3.8-flash');
-  $('settings').open=false; add('sys','Salvato ✅');
+  store.set('jv_key',$('key').value.replace(/[^A-Za-z0-9_.-]/g,''));
+  store.set('jv_model',$('model').value.trim()||DEF);
+  store.set('jv_name',$('name').value.trim());
+  store.set('jv_voice',$('vname').value.trim()||'Luca');
+  $('settings').open=false; add('note','Salvato ✅');
 };
+$('vlist').onclick=()=>{
+  const vs=speechSynthesis.getVoices().filter(v=>v.lang&&v.lang.toLowerCase().startsWith('it')).map(v=>v.name);
+  add('note','Voci italiane: '+(vs.join(', ')||'nessuna trovata'));
+};
+$('mshow').onclick=()=>add('note',mem.length?'Memoria: '+mem.join(' | '):'Memoria vuota.');
+$('mclear').onclick=()=>{mem=[];store.set('jv_mem','[]');add('note','Memoria cancellata.');};
 $('clear').onclick=()=>{history=[];$('log').innerHTML='';speechSynthesis.cancel();};
 $('voice').onclick=()=>{voiceOn=!voiceOn;$('voice').textContent=voiceOn?'🔊 Voce':'🔇 Voce';if(!voiceOn)speechSynthesis.cancel();};
 const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
